@@ -281,6 +281,57 @@ export class World {
     return Infinity;
   }
 
+  // BFS path over open cells, greedily smoothed with LOS. Returns world-space
+  // waypoints (excluding start), or null if unreachable.
+  findPath(fromW, toW) {
+    const W = this.w, H = this.h;
+    const sx = Math.floor(fromW.x / CELL), sy = Math.floor(fromW.z / CELL);
+    const tx = Math.floor(toW.x / CELL), ty = Math.floor(toW.z / CELL);
+    if (this.cell(sx, sy) === 0 || this.cell(tx, ty) === 0) return null;
+    const start = sy * W + sx, target = ty * W + tx;
+    if (start === target) return [];
+    const prev = new Int32Array(W * H).fill(-1);
+    const visited = new Uint8Array(W * H);
+    visited[start] = 1;
+    const queue = [start];
+    let found = false;
+    for (let qi = 0; qi < queue.length; qi++) {
+      const cur = queue[qi];
+      if (cur === target) { found = true; break; }
+      const cx = cur % W, cy = (cur / W) | 0;
+      if (cx + 1 < W) this._bfsVisit(cur, cur + 1, visited, prev, queue);
+      if (cx - 1 >= 0) this._bfsVisit(cur, cur - 1, visited, prev, queue);
+      if (cy + 1 < H) this._bfsVisit(cur, cur + W, visited, prev, queue);
+      if (cy - 1 >= 0) this._bfsVisit(cur, cur - W, visited, prev, queue);
+    }
+    if (!found) return null;
+    const cells = [];
+    for (let cur = target; cur !== start; cur = prev[cur]) {
+      if (cur === -1) return null;
+      cells.push(new THREE.Vector3((cur % W) * CELL + CELL / 2, 0, ((cur / W) | 0) * CELL + CELL / 2));
+    }
+    cells.reverse();
+    // smoothing: from each anchor, jump to the farthest waypoint with clear LOS
+    const path = [];
+    let anchor = fromW;
+    let i = 0;
+    while (i < cells.length) {
+      let j = i;
+      while (j + 1 < cells.length && this.hasLOS(anchor, cells[j + 1])) j++;
+      path.push(cells[j]);
+      anchor = cells[j];
+      i = j + 1;
+    }
+    return path;
+  }
+
+  _bfsVisit(cur, next, visited, prev, queue) {
+    if (visited[next] || this.grid[next] === 0) return;
+    visited[next] = 1;
+    prev[next] = cur;
+    queue.push(next);
+  }
+
   roomCenterWorld(i) {
     const r = this.rooms[i % this.rooms.length];
     return new THREE.Vector3(r.cx * CELL + CELL / 2, 0, r.cy * CELL + CELL / 2);

@@ -1,5 +1,5 @@
 // Minimal offline cache so the game is installable/playable offline.
-const CACHE = 'blacksite-v1';
+const CACHE = 'blacksite-v2';
 const ASSETS = [
   '.', 'index.html', 'manifest.json', 'icon.svg',
   'vendor/three.module.js',

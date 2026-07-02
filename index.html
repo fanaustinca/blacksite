@@ -89,6 +89,8 @@
   }
   #btn-fire { right: 26px; bottom: 110px; width: 84px; height: 84px; font-size: 14px; }
   #btn-reload { right: 128px; bottom: 60px; width: 58px; height: 58px; }
+  #btn-jump { right: 40px; bottom: 214px; width: 62px; height: 62px; }
+  #btn-weapon { right: 140px; bottom: 150px; width: 58px; height: 58px; }
   .touch-btn:active { background: rgba(120,200,120,0.4); }
 </style>
 </head>
@@ -106,7 +108,7 @@
       <div id="health-bar"><div id="health-fill"></div></div>
     </div>
     <div class="hud-panel" id="ammo-panel">
-      <div class="hud-label">9MM CARBINE</div>
+      <div class="hud-label" id="weapon-name">9MM CARBINE</div>
       <div class="hud-value"><span id="ammo-mag">15</span><span style="font-size:16px;opacity:0.6"> / <span id="ammo-reserve">60</span></span></div>
     </div>
     <div class="hud-panel" id="objective">HOSTILES REMAINING: <b id="enemy-count">0</b></div>
@@ -118,6 +120,8 @@
     <div id="stick-base"><div id="stick-nub"></div></div>
     <div class="touch-btn" id="btn-fire">FIRE</div>
     <div class="touch-btn" id="btn-reload">RLD</div>
+    <div class="touch-btn" id="btn-jump">JMP</div>
+    <div class="touch-btn" id="btn-weapon">WPN</div>
   </div>
 
   <div id="overlay">
@@ -125,8 +129,9 @@
     <h2>SECTOR 7 &mdash; CLEARANCE REVOKED</h2>
     <div class="msg pulse" id="overlay-msg">CLICK / TAP TO DEPLOY</div>
     <div class="sub">
-      WASD move &nbsp;&middot;&nbsp; MOUSE aim &nbsp;&middot;&nbsp; CLICK fire &nbsp;&middot;&nbsp; R reload &nbsp;&middot;&nbsp; SHIFT sprint<br>
-      On mobile: left thumb moves, right thumb aims, FIRE button shoots.<br>
+      WASD move &nbsp;&middot;&nbsp; MOUSE aim &nbsp;&middot;&nbsp; CLICK fire &nbsp;&middot;&nbsp; R reload<br>
+      SHIFT sprint &nbsp;&middot;&nbsp; SPACE jump &nbsp;&middot;&nbsp; Q swap weapon<br>
+      On mobile: left thumb moves (push to edge to sprint), right thumb aims.<br>
       Neutralize all hostiles in the sector.
     </div>
   </div>

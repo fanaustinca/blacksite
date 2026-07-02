@@ -4,6 +4,7 @@ import * as THREE from 'three';
 const EYE_HEIGHT = 1.62;
 const RADIUS = 0.38;
 const WALK = 4.2, SPRINT = 6.6;
+const JUMP_SPEED = 6.4, GRAVITY = 18;
 
 export class Player {
   constructor(camera, world, dom) {
@@ -23,6 +24,12 @@ export class Player {
     this.recoil = 0;
     this.wantFire = false;
     this.wantReload = false;
+    this.wantJump = false;
+    this.wantSwap = false;
+    this.touchSprint = false;
+    this.jumpY = 0;
+    this.vy = 0;
+    this.grounded = true;
     this.isTouch = ('ontouchstart' in window) && matchMedia('(pointer: coarse)').matches;
     this.moveInput = new THREE.Vector2(); // from touch stick
     this.speedNow = 0;
@@ -43,6 +50,8 @@ export class Player {
     addEventListener('keydown', e => {
       this.keys[e.code] = true;
       if (e.code === 'KeyR') this.wantReload = true;
+      if (e.code === 'Space') { e.preventDefault(); this.wantJump = true; }
+      if (e.code === 'KeyQ' || e.code === 'Digit1' || e.code === 'Digit2') this.wantSwap = true;
     });
     addEventListener('keyup', e => { this.keys[e.code] = false; });
     addEventListener('blur', () => { this.keys = {}; });
@@ -89,6 +98,8 @@ export class Player {
         if (len > max) { dx = dx / len * max; dy = dy / len * max; }
         nub.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
         this.moveInput.set(dx / max, -dy / max);
+        // pushing the stick to its edge sprints
+        this.touchSprint = len >= max * 0.99;
       }
     }, { passive: false });
     const endStick = e => {
@@ -96,6 +107,7 @@ export class Player {
         if (t.identifier !== stickId) continue;
         stickId = null;
         this.moveInput.set(0, 0);
+        this.touchSprint = false;
         base.style.display = 'none';
         nub.style.transform = 'translate(-50%,-50%)';
       }
@@ -128,6 +140,10 @@ export class Player {
     fireBtn.addEventListener('touchstart', e => { e.preventDefault(); this.wantFire = true; }, { passive: false });
     fireBtn.addEventListener('touchend', e => { e.preventDefault(); this.wantFire = false; }, { passive: false });
     reloadBtn.addEventListener('touchstart', e => { e.preventDefault(); this.wantReload = true; }, { passive: false });
+    const jumpBtn = document.getElementById('btn-jump');
+    jumpBtn.addEventListener('touchstart', e => { e.preventDefault(); this.wantJump = true; }, { passive: false });
+    const weaponBtn = document.getElementById('btn-weapon');
+    weaponBtn.addEventListener('touchstart', e => { e.preventDefault(); this.wantSwap = true; }, { passive: false });
   }
 
   takeDamage(amount) {
@@ -147,8 +163,20 @@ export class Player {
     const inLen = Math.hypot(ix, iz);
     if (inLen > 1) { ix /= inLen; iz /= inLen; }
 
-    const sprint = this.keys['ShiftLeft'] || this.keys['ShiftRight'];
+    const sprint = this.keys['ShiftLeft'] || this.keys['ShiftRight'] || this.touchSprint;
     const speed = sprint ? SPRINT : WALK;
+
+    // jumping
+    if (this.wantJump && this.grounded && !this.dead) {
+      this.vy = JUMP_SPEED;
+      this.grounded = false;
+    }
+    this.wantJump = false;
+    if (!this.grounded) {
+      this.vy -= GRAVITY * dt;
+      this.jumpY += this.vy * dt;
+      if (this.jumpY <= 0) { this.jumpY = 0; this.vy = 0; this.grounded = true; }
+    }
 
     const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
     // camera forward on ground plane
@@ -170,8 +198,8 @@ export class Player {
       this.pos.copy(corrected);
     }
 
-    // head bob scaled by speed
-    const targetAmp = Math.min(1, this.speedNow / WALK) * 0.045;
+    // head bob scaled by speed, suppressed while airborne
+    const targetAmp = this.grounded ? Math.min(1, this.speedNow / WALK) * 0.045 : 0;
     this.bobAmp += (targetAmp - this.bobAmp) * Math.min(1, 8 * dt);
     this.bobPhase += this.speedNow * dt * 1.9;
     const bobY = Math.sin(this.bobPhase * 2) * this.bobAmp;
@@ -182,7 +210,7 @@ export class Player {
 
     this.camera.position.set(
       this.pos.x + rx * bobX,
-      EYE_HEIGHT + bobY + (this.dead ? -0.9 : 0),
+      EYE_HEIGHT + this.jumpY + bobY + (this.dead ? -0.9 : 0),
       this.pos.z + rz * bobX
     );
     this.camera.rotation.order = 'YXZ';

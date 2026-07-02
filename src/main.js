@@ -46,6 +46,7 @@ const $ = id => document.getElementById(id);
 const hud = {
   health: $('health-value'), healthFill: $('health-fill'),
   mag: $('ammo-mag'), reserve: $('ammo-reserve'),
+  weaponName: $('weapon-name'),
   enemies: $('enemy-count'), overlay: $('overlay'),
   overlayMsg: $('overlay-msg'), vignette: $('damage-vignette'),
   hurtFlash: $('hurt-flash'), hitmarker: $('hitmarker'),
@@ -93,11 +94,11 @@ function buildLevel() {
   } else {
     weapon.world = world;
     weapon.attachSparks(scene);
-    if (wasDead) { weapon.mag = 15; weapon.reserve = 60; weapon.reloading = 0; }
+    if (wasDead) weapon.resetAmmo();
   }
 
   const count = 5 + level * 2;
-  enemies = spawnEnemies(scene, world, count, spawn);
+  enemies = spawnEnemies(scene, world, count, spawn, level);
 
   pickups = [];
   for (let i = 1; i < world.rooms.length; i += 2) {
@@ -168,6 +169,7 @@ function updateHUD() {
   hud.vignette.style.opacity = pct < 0.4 ? String(0.9 - pct * 1.5) : '0';
   hud.mag.textContent = weapon.reloading > 0 ? '--' : weapon.mag;
   hud.reserve.textContent = weapon.reserve;
+  hud.weaponName.textContent = weapon.current.def.name;
   hud.enemies.textContent = enemies.filter(e => e.alive).length;
 }
 
@@ -183,8 +185,15 @@ function tick() {
     world.update(dt);
 
     if (player.wantReload) { player.wantReload = false; weapon.startReload(); }
+    if (player.wantSwap) { player.wantSwap = false; weapon.swap(); }
     if (player.wantFire && !player.dead) {
       const res = weapon.tryFire(player, enemies);
+      if (res) {
+        // gunfire is loud — enemies in earshot come looking (walls muffle nothing)
+        for (const e of enemies) {
+          if (e.alive && e.pos.distanceTo(player.pos) < 22) e.hearNoise(player.pos);
+        }
+      }
       if (res && res.hitEnemy) {
         hitmarkerT = 0.18;
         hud.hitmarker.style.opacity = '1';
@@ -199,7 +208,7 @@ function tick() {
       }
     }
 
-    for (const e of enemies) e.update(dt, player, onPlayerHit);
+    for (const e of enemies) e.update(dt, player, onPlayerHit, enemies);
 
     // pickups
     for (const p of pickups) {
@@ -211,7 +220,7 @@ function tick() {
         p.mesh.visible = false;
         pickupSound();
         if (p.kind === 'health') player.health = Math.min(player.maxHealth, player.health + 35);
-        else weapon.addAmmo(30);
+        else weapon.addAmmo();
       }
     }
 
@@ -237,9 +246,11 @@ function tick() {
 
 tick();
 
-// debug/testing: ?autostart skips the menu; &nearenemy teleports next to a hostile
+// debug/testing: ?autostart skips the menu; &nearenemy teleports next to a
+// hostile; &shotgun starts with the shotgun out
 if (location.search.includes('autostart')) {
   startGame();
+  if (location.search.includes('shotgun')) weapon.swap();
   if (location.search.includes('nearenemy') && enemies.length) {
     const e = enemies[0];
     player.pos.set(e.pos.x + 3, 0, e.pos.z + 0.5);
