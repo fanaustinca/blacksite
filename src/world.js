@@ -58,10 +58,12 @@ export class World {
   }
 
   generate() {
-    const ROOM_TRIES = 26;
+    // scale generation with map size: more rooms, bigger halls, extra loops
+    const ROOM_TRIES = Math.round(this.w * this.h / 44);
+    const roomSpan = 5 + Math.max(0, ((this.w - 30) / 8) | 0); // 4–8 at 30², up to 4–13 at 64²
     for (let i = 0; i < ROOM_TRIES; i++) {
-      const rw = 4 + (this.rnd() * 5) | 0;
-      const rh = 4 + (this.rnd() * 5) | 0;
+      const rw = 4 + (this.rnd() * roomSpan) | 0;
+      const rh = 4 + (this.rnd() * roomSpan) | 0;
       const rx = 1 + (this.rnd() * (this.w - rw - 2)) | 0;
       const ry = 1 + (this.rnd() * (this.h - rh - 2)) | 0;
       const room = { x: rx, y: ry, w: rw, h: rh, cx: rx + (rw >> 1), cy: ry + (rh >> 1) };
@@ -82,7 +84,8 @@ export class World {
       this.corridor(a.cx, a.cy, b.cx, a.cy);
       this.corridor(b.cx, a.cy, b.cx, b.cy);
     }
-    for (let i = 0; i < 3 && this.rooms.length > 3; i++) {
+    const loops = 2 + ((this.rooms.length / 5) | 0);
+    for (let i = 0; i < loops && this.rooms.length > 3; i++) {
       const a = this.rooms[(this.rnd() * this.rooms.length) | 0];
       const b = this.rooms[(this.rnd() * this.rooms.length) | 0];
       if (a === b) continue;
@@ -150,64 +153,77 @@ export class World {
   }
 
   placeDoors() {
-    // corridor cells that touch a room cell = doorway candidates
+    // A doorway is the full run of corridor cells that border the same side of
+    // a room, capped by solid wall at both ends — so the slab always spans the
+    // whole opening, meets the walls flush, and faces across the corridor.
     const isRoom = (x, y) => (x >= 0 && y >= 0 && x < this.w && y < this.h) && this.roomMask[y * this.w + x] === 1;
     const isCorr = (x, y) => this.cell(x, y) === 1 && !isRoom(x, y);
-    const candidates = [];
+
+    const openings = [];
+    const claimed = new Set();
     for (let y = 0; y < this.h; y++)
       for (let x = 0; x < this.w; x++) {
-        if (!isCorr(x, y)) continue;
-        if (isRoom(x + 1, y) || isRoom(x - 1, y) || isRoom(x, y + 1) || isRoom(x, y - 1)) candidates.push([x, y]);
+        if (!isCorr(x, y) || claimed.has(x + ',' + y)) continue;
+        for (const [rdx, rdy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+          if (!isRoom(x + rdx, y + rdy)) continue;
+          // span axis runs along the room wall, perpendicular to room direction
+          const [sx, sy] = rdy !== 0 ? [1, 0] : [0, 1];
+          let x0 = x, y0 = y;
+          while (isCorr(x0 - sx, y0 - sy) && isRoom(x0 - sx + rdx, y0 - sy + rdy)) { x0 -= sx; y0 -= sy; }
+          let x1 = x, y1 = y;
+          while (isCorr(x1 + sx, y1 + sy) && isRoom(x1 + sx + rdx, y1 + sy + rdy)) { x1 += sx; y1 += sy; }
+          // both ends must hit solid wall (a framed opening, not a grazing edge)
+          if (this.cell(x0 - sx, y0 - sy) !== 0 || this.cell(x1 + sx, y1 + sy) !== 0) continue;
+          const len = Math.abs(x1 - x0) + Math.abs(y1 - y0) + 1;
+          if (len > 2) continue; // wider than a corridor — not a doorway
+          const cells = [];
+          for (let i = 0; i < len; i++) cells.push([x0 + sx * i, y0 + sy * i]);
+          if (cells.some(c => claimed.has(c[0] + ',' + c[1]))) continue;
+          for (const c of cells) claimed.add(c[0] + ',' + c[1]);
+          openings.push({ cells, along: rdy !== 0 ? 'x' : 'z' });
+          break;
+        }
       }
+
+    // shuffle (seeded) so doors don't cluster toward one corner of the map
+    for (let i = openings.length - 1; i > 0; i--) {
+      const j = (this.rnd() * (i + 1)) | 0;
+      [openings[i], openings[j]] = [openings[j], openings[i]];
+    }
 
     const doorMat = new THREE.MeshStandardMaterial({ map: rustedMetal(), roughness: 0.5, metalness: 0.6 });
     const stripeMat = new THREE.MeshStandardMaterial({ map: hazardStripes(), roughness: 0.7 });
-    const taken = new Set();
-    let placed = 0;
-    for (const [x, y] of candidates) {
-      if (placed >= 14) break;
-      if (taken.has(x + ',' + y)) continue;
-      // don't crowd doors together
+    const MAX_DOORS = Math.max(3, Math.min(8, this.rooms.length >> 1));
+    for (const op of openings) {
+      if (this.doors.length >= MAX_DOORS) break;
+      const [gx, gy] = op.cells[0];
       let crowded = false;
       for (const d of this.doors) {
-        if (Math.abs(d.gx - x) + Math.abs(d.gy - y) < 4) { crowded = true; break; }
+        if (Math.abs(d.gx - gx) + Math.abs(d.gy - gy) < 7) { crowded = true; break; }
       }
       if (crowded) continue;
 
-      // pair with an adjacent corridor-candidate cell (corridors are 2 wide)
-      let pair = null;
-      for (const [dx, dy] of [[1, 0], [0, 1]]) {
-        const nx = x + dx, ny = y + dy;
-        if (isCorr(nx, ny) && !taken.has(nx + ',' + ny)
-          && candidates.some(([cx, cy]) => cx === nx && cy === ny)) { pair = [nx, ny]; break; }
-      }
-      const cellsHere = pair ? [[x, y], pair] : [[x, y]];
-      const along = pair ? (pair[0] !== x ? 'x' : 'z') : (isRoom(x + 1, y) || isRoom(x - 1, y) ? 'z' : 'x');
-
-      // door slab spanning the cells
-      const minX = Math.min(...cellsHere.map(c => c[0])), maxX = Math.max(...cellsHere.map(c => c[0]));
-      const minY = Math.min(...cellsHere.map(c => c[1])), maxY = Math.max(...cellsHere.map(c => c[1]));
+      // door slab spanning the full opening
+      const xs = op.cells.map(c => c[0]), ys = op.cells.map(c => c[1]);
+      const minX = Math.min(...xs), maxX = Math.max(...xs);
+      const minY = Math.min(...ys), maxY = Math.max(...ys);
       const cx = (minX + maxX + 1) / 2 * CELL, cz = (minY + maxY + 1) / 2 * CELL;
-      const spanX = along === 'x' ? (maxX - minX + 1) * CELL : 0.32;
-      const spanZ = along === 'z' ? (maxY - minY + 1) * CELL : 0.32;
+      const spanX = op.along === 'x' ? (maxX - minX + 1) * CELL : 0.32;
+      const spanZ = op.along === 'z' ? (maxY - minY + 1) * CELL : 0.32;
 
       const mesh = new THREE.Mesh(new THREE.BoxGeometry(spanX, WALL_H, spanZ), doorMat);
       mesh.position.set(cx, WALL_H / 2, cz);
       mesh.castShadow = true;
       // hazard stripe base strip
       const strip = new THREE.Mesh(
-        new THREE.BoxGeometry(along === 'x' ? spanX : 0.36, 0.5, along === 'z' ? spanZ : 0.36), stripeMat);
+        new THREE.BoxGeometry(op.along === 'x' ? spanX : 0.36, 0.5, op.along === 'z' ? spanZ : 0.36), stripeMat);
       strip.position.set(cx, 0.25, cz);
       mesh.userData.strip = strip;
       this.group.add(mesh, strip);
 
-      const door = { gx: x, gy: y, cells: cellsHere, mesh, strip, open: 0, cx, cz };
+      const door = { gx, gy, cells: op.cells, mesh, strip, open: 0, cx, cz };
       this.doors.push(door);
-      for (const c of cellsHere) {
-        taken.add(c[0] + ',' + c[1]);
-        this.doorAt.set(c[0] + ',' + c[1], door);
-      }
-      placed++;
+      for (const c of op.cells) this.doorAt.set(c[0] + ',' + c[1], door);
     }
   }
 

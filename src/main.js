@@ -119,7 +119,8 @@ function makePickup(kind, pos) {
 // asGuest: build the world but let the host drive the enemies (puppets)
 function buildLevel(seed = null, guestTypes = null) {
   clearScene();
-  world = new World(scene, 30 + level * 2, 30 + level * 2, seed);
+  const gridSize = Math.min(64, 28 + level * 4);
+  world = new World(scene, gridSize, gridSize, seed);
   const spawn = world.roomCenterWorld(0);
 
   if (!player) player = new Player(camera, world, renderer.domElement);

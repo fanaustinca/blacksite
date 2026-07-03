@@ -179,9 +179,15 @@ class Net {
 
   listenInvites(cb) {
     const { collection, onSnapshot } = this.fb.fs;
-    const unsub = onSnapshot(collection(this.fb.db, 'users', this.user.uid, 'invites'),
-      snap => cb(snap.docs.map(d => ({ uid: d.id, ...d.data() }))
-        .filter(i => Date.now() - i.at < 5 * 60 * 1000)));
+    const TTL = 24 * 60 * 60 * 1000;
+    const unsub = onSnapshot(collection(this.fb.db, 'users', this.user.uid, 'invites'), snap => {
+      const invites = snap.docs.map(d => ({ uid: d.id, ...d.data() }));
+      // expired invites: hide them and delete the docs so they don't pile up
+      for (const i of invites) {
+        if (Date.now() - i.at >= TTL) this.clearInvite(i.uid).catch(() => {});
+      }
+      cb(invites.filter(i => Date.now() - i.at < TTL));
+    });
     this._unsubs.push(unsub);
     return unsub;
   }
@@ -199,9 +205,37 @@ class Net {
     });
   }
 
+  // delete a room doc plus its ICE-candidate subcollections (no cascade in Firestore)
+  async _deleteRoom(code) {
+    const { doc, deleteDoc, collection, getDocs } = this.fb.fs;
+    const roomRef = doc(this.fb.db, 'rooms', code);
+    try {
+      for (const sub of ['hostCand', 'guestCand']) {
+        const snap = await getDocs(collection(roomRef, sub));
+        await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
+      }
+      await deleteDoc(roomRef);
+    } catch (e) { console.warn('room cleanup:', e); }
+  }
+
+  // sweep leftovers: my own rooms from prior sessions, and anyone's older than a day
+  async _sweepStaleRooms() {
+    const { collection, query, where, getDocs } = this.fb.fs;
+    const rooms = collection(this.fb.db, 'rooms');
+    try {
+      const [mine, old] = await Promise.all([
+        getDocs(query(rooms, where('hostUid', '==', this.user.uid))),
+        getDocs(query(rooms, where('at', '<', Date.now() - 24 * 60 * 60 * 1000))),
+      ]);
+      const codes = new Set([...mine.docs, ...old.docs].map(d => d.id));
+      await Promise.all([...codes].map(c => this._deleteRoom(c)));
+    } catch (e) { console.warn('room sweep:', e); }
+  }
+
   // Host: create room, return {code, channel: Promise<RTCDataChannel>}
   async hostRoom(seed) {
     const { doc, setDoc, updateDoc, onSnapshot, collection, addDoc } = this.fb.fs;
+    await this._sweepStaleRooms();
     const code = Array.from({ length: 5 }, () =>
       'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[(Math.random() * 32) | 0]).join('');
     const roomRef = doc(this.fb.db, 'rooms', code);
@@ -232,7 +266,13 @@ class Net {
     this._unsubs.push(unsubAns, unsubCand);
 
     const channel = new Promise((resolve, reject) => {
-      dc.onopen = () => resolve(dc);
+      dc.onopen = () => {
+        // connected — signaling is done: stop candidate writes/listeners, remove the room
+        pc.onicecandidate = null;
+        unsubAns(); unsubCand();
+        this._deleteRoom(code);
+        resolve(dc);
+      };
       pc.onconnectionstatechange = () => {
         if (['failed', 'closed'].includes(pc.connectionState)) reject(new Error(pc.connectionState));
       };
@@ -248,13 +288,19 @@ class Net {
     if (!snap.exists()) throw new Error('room-not-found');
     const room = snap.data();
     const pc = this._newPC();
+    let unsubCand = null;
 
     pc.onicecandidate = e => {
       if (e.candidate) addDoc(collection(roomRef, 'guestCand'), e.candidate.toJSON());
     };
     const channel = new Promise((resolve, reject) => {
       pc.ondatachannel = e => {
-        e.channel.onopen = () => resolve(e.channel);
+        e.channel.onopen = () => {
+          // connected — stop writing candidates into the room (host deletes it now)
+          pc.onicecandidate = null;
+          unsubCand?.();
+          resolve(e.channel);
+        };
       };
       pc.onconnectionstatechange = () => {
         if (['failed', 'closed'].includes(pc.connectionState)) reject(new Error(pc.connectionState));
@@ -268,7 +314,7 @@ class Net {
       answer: { type: answer.type, sdp: answer.sdp },
       guestUid: this.user.uid, guestName: this.profile.username,
     });
-    const unsubCand = onSnapshot(collection(roomRef, 'hostCand'), s => {
+    unsubCand = onSnapshot(collection(roomRef, 'hostCand'), s => {
       s.docChanges().forEach(ch => {
         if (ch.type === 'added') pc.addIceCandidate(new RTCIceCandidate(ch.doc.data())).catch(() => {});
       });
