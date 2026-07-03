@@ -1,0 +1,47 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // profiles — readable by any signed-in user, writable by the owner
+    match /users/{uid} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null && request.auth.uid == uid;
+      allow delete: if request.auth != null && request.auth.uid == uid;
+
+      // friend requests: sender creates, owner reads/deletes (accept/decline)
+      match /requests/{fromUid} {
+        allow read: if request.auth != null && (request.auth.uid == uid || request.auth.uid == fromUid);
+        allow create: if request.auth != null && request.auth.uid == fromUid;
+        allow delete: if request.auth != null && (request.auth.uid == uid || request.auth.uid == fromUid);
+      }
+
+      // friendships: either side of the pair may write its entries
+      match /friends/{fuid} {
+        allow read: if request.auth != null && request.auth.uid == uid;
+        allow write: if request.auth != null && (request.auth.uid == uid || request.auth.uid == fuid);
+      }
+
+      // co-op invites: sender creates, owner reads/deletes
+      match /invites/{fromUid} {
+        allow read: if request.auth != null && request.auth.uid == uid;
+        allow create, update: if request.auth != null && request.auth.uid == fromUid;
+        allow delete: if request.auth != null && (request.auth.uid == uid || request.auth.uid == fromUid);
+      }
+    }
+
+    // unique-callsign registry (random, never user-typed)
+    match /usernames/{name} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
+      allow delete: if request.auth != null && resource.data.uid == request.auth.uid;
+    }
+
+    // WebRTC signaling rooms — short-lived, any signed-in player
+    match /rooms/{code} {
+      allow read, write: if request.auth != null;
+      match /{sub}/{docId} {
+        allow read, write: if request.auth != null;
+      }
+    }
+  }
+}

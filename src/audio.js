@@ -134,6 +134,109 @@ export function deathSound() {
   osc.start(t); osc.stop(t + 1.05);
 }
 
+let stepFlip = false;
+export function footstep(vol = 0.08) {
+  const a = ac();
+  const t = a.currentTime;
+  stepFlip = !stepFlip;
+  const src = a.createBufferSource();
+  src.buffer = noiseBuffer(0.07);
+  const bp = a.createBiquadFilter();
+  bp.type = 'lowpass';
+  bp.frequency.value = stepFlip ? 420 : 360;
+  const g = a.createGain();
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
+  src.connect(bp).connect(g).connect(a.destination);
+  src.start(t);
+}
+
+export function killConfirm() {
+  const a = ac();
+  const t = a.currentTime;
+  for (const [dt, f] of [[0, 660], [0.07, 440]]) {
+    const osc = a.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.value = f;
+    const g = a.createGain();
+    g.gain.setValueAtTime(0.0, t + dt);
+    g.gain.linearRampToValueAtTime(0.14, t + dt + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dt + 0.09);
+    osc.connect(g).connect(a.destination);
+    osc.start(t + dt); osc.stop(t + dt + 0.11);
+  }
+}
+
+export function headshotDing() {
+  const a = ac();
+  const t = a.currentTime;
+  const osc = a.createOscillator();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(1980, t);
+  const g = a.createGain();
+  g.gain.setValueAtTime(0.16, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+  osc.connect(g).connect(a.destination);
+  osc.start(t); osc.stop(t + 0.24);
+}
+
+export function explosionSound() {
+  const a = ac();
+  const t = a.currentTime;
+  const src = a.createBufferSource();
+  src.buffer = noiseBuffer(0.9);
+  const lp = a.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.setValueAtTime(1400, t);
+  lp.frequency.exponentialRampToValueAtTime(80, t + 0.8);
+  const g = a.createGain();
+  g.gain.setValueAtTime(0.7, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.85);
+  src.connect(lp).connect(g).connect(a.destination);
+  src.start(t);
+  const osc = a.createOscillator();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(90, t);
+  osc.frequency.exponentialRampToValueAtTime(28, t + 0.5);
+  const og = a.createGain();
+  og.gain.setValueAtTime(0.6, t);
+  og.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
+  osc.connect(og).connect(a.destination);
+  osc.start(t); osc.stop(t + 0.6);
+}
+
+export function throwWhoosh() {
+  const a = ac();
+  const t = a.currentTime;
+  const src = a.createBufferSource();
+  src.buffer = noiseBuffer(0.2);
+  const bp = a.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.frequency.setValueAtTime(500, t);
+  bp.frequency.exponentialRampToValueAtTime(1600, t + 0.15);
+  const g = a.createGain();
+  g.gain.setValueAtTime(0.1, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+  src.connect(bp).connect(g).connect(a.destination);
+  src.start(t);
+}
+
+export function upgradeSound() {
+  const a = ac();
+  const t = a.currentTime;
+  for (const [dt, f] of [[0, 440], [0.1, 554], [0.2, 659]]) {
+    const osc = a.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = f;
+    const g = a.createGain();
+    g.gain.setValueAtTime(0.0, t + dt);
+    g.gain.linearRampToValueAtTime(0.13, t + dt + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dt + 0.18);
+    osc.connect(g).connect(a.destination);
+    osc.start(t + dt); osc.stop(t + dt + 0.2);
+  }
+}
+
 // quiet ambient hum, started once
 let ambientStarted = false;
 export function startAmbient() {

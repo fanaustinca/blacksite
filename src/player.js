@@ -1,5 +1,7 @@
 // Player controller: pointer-lock mouse look + WASD on desktop, twin-zone touch on mobile.
 import * as THREE from 'three';
+import { footstep } from './audio.js';
+import { MODS } from './mods.js';
 
 const EYE_HEIGHT = 1.62;
 const RADIUS = 0.38;
@@ -26,6 +28,8 @@ export class Player {
     this.wantReload = false;
     this.wantJump = false;
     this.wantSwap = false;
+    this.wantGrenade = false;
+    this.stepAcc = 0;
     this.touchSprint = false;
     this.jumpY = 0;
     this.vy = 0;
@@ -42,6 +46,7 @@ export class Player {
 
   spawnAt(v) {
     this.pos.copy(v);
+    this.maxHealth = 100 + MODS.maxHp;
     this.health = this.maxHealth;
     this.dead = false;
   }
@@ -52,6 +57,7 @@ export class Player {
       if (e.code === 'KeyR') this.wantReload = true;
       if (e.code === 'Space') { e.preventDefault(); this.wantJump = true; }
       if (e.code === 'KeyQ' || e.code === 'Digit1' || e.code === 'Digit2') this.wantSwap = true;
+      if (e.code === 'KeyG') this.wantGrenade = true;
     });
     addEventListener('keyup', e => { this.keys[e.code] = false; });
     addEventListener('blur', () => { this.keys = {}; });
@@ -144,6 +150,8 @@ export class Player {
     jumpBtn.addEventListener('touchstart', e => { e.preventDefault(); this.wantJump = true; }, { passive: false });
     const weaponBtn = document.getElementById('btn-weapon');
     weaponBtn.addEventListener('touchstart', e => { e.preventDefault(); this.wantSwap = true; }, { passive: false });
+    const grenadeBtn = document.getElementById('btn-grenade');
+    grenadeBtn.addEventListener('touchstart', e => { e.preventDefault(); this.wantGrenade = true; }, { passive: false });
   }
 
   takeDamage(amount) {
@@ -164,7 +172,8 @@ export class Player {
     if (inLen > 1) { ix /= inLen; iz /= inLen; }
 
     const sprint = this.keys['ShiftLeft'] || this.keys['ShiftRight'] || this.touchSprint;
-    const speed = sprint ? SPRINT : WALK;
+    const speed = (sprint ? SPRINT : WALK) * MODS.speed;
+    this.sprinting = sprint && this.speedNow > 3;
 
     // jumping
     if (this.wantJump && this.grounded && !this.dead) {
@@ -196,6 +205,15 @@ export class Player {
       this.pos.z += this.vel.z * dt;
       const corrected = this.world.collide(this.pos, RADIUS);
       this.pos.copy(corrected);
+
+      // footsteps
+      if (this.grounded && this.speedNow > 0.6) {
+        this.stepAcc += this.speedNow * dt;
+        if (this.stepAcc > 2.3) {
+          this.stepAcc = 0;
+          footstep(this.sprinting ? 0.13 : 0.07);
+        }
+      }
     }
 
     // head bob scaled by speed, suppressed while airborne

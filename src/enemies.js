@@ -6,7 +6,7 @@
 // Types: grunt (rifleman), rusher (fast, melee), heavy (slow, tough, burst fire).
 import * as THREE from 'three';
 import { CELL } from './world.js';
-import { enemyShot } from './audio.js';
+import { enemyShot, footstep } from './audio.js';
 
 const SIGHT_RANGE = 26;
 const FOV = Math.PI * 0.55;          // ~100 degrees while not in combat
@@ -33,6 +33,12 @@ const TYPES = {
     uniform: 0x2e3138, gear: 0x17181c, rifle: true,
     attackRange: 18, fireInterval: [1.7, 2.6], damage: [6, 10], burst: 3,
     melee: false,
+  },
+  boss: {
+    hp: 550, speed: 2.1, scale: 1.6,
+    uniform: 0x4a2028, gear: 0x14090c, rifle: true,
+    attackRange: 22, fireInterval: [2.0, 2.8], damage: [7, 11], burst: 6,
+    melee: false, boss: true,
   },
 };
 
@@ -130,10 +136,11 @@ export class Enemy {
 
     // floating health bar (shows after taking damage)
     this.hpBarT = 0;
+    this.barW = this.cfg.boss ? 1.6 : 0.68;
     const barBg = new THREE.Sprite(new THREE.SpriteMaterial({ color: 0x0c0e0c, depthWrite: false }));
-    barBg.scale.set(0.72, 0.07, 1);
+    barBg.scale.set(this.barW + 0.04, 0.07, 1);
     const barFg = new THREE.Sprite(new THREE.SpriteMaterial({ color: 0x62d072, depthWrite: false }));
-    barFg.scale.set(0.68, 0.045, 1);
+    barFg.scale.set(this.barW, 0.045, 1);
     barBg.renderOrder = 10; barFg.renderOrder = 11;
     barBg.position.y = this.height + 0.25;
     barFg.position.y = this.height + 0.25;
@@ -229,7 +236,13 @@ export class Enemy {
     this.pos.x += dirX * this.cfg.speed * speedScale * dt;
     this.pos.z += dirZ * this.cfg.speed * speedScale * dt;
     this.pos.copy(this.world.collide(this.pos, 0.35));
+    const prevPhase = this.walkPhase;
     this.walkPhase += dt * 7 * speedScale * (this.cfg.speed / 2.6);
+    // audible footsteps when near the local player
+    if (((prevPhase / Math.PI) | 0) !== ((this.walkPhase / Math.PI) | 0) && this._stepListener) {
+      const d = this.pos.distanceTo(this._stepListener);
+      if (d < 13) footstep(Math.min(0.09, 0.11 / (1 + d * 0.45)) * this.cfg.scale);
+    }
   }
 
   // Pathfind toward goal and walk the path. Returns true when arrived.
@@ -267,6 +280,8 @@ export class Enemy {
       if (this.hitFlash > 0) this.hitFlash -= dt;
       return;
     }
+
+    this._stepListener = player.listenPos || player.pos;
 
     if (this.needsAlertAllies) {
       this.needsAlertAllies = false;
@@ -346,14 +361,15 @@ export class Enemy {
 
     this.muzzle.intensity = Math.max(0, this.muzzle.intensity - dt * 60);
 
-    // floating health bar
+    // floating health bar (bosses keep theirs up while in combat)
+    if (this.cfg.boss && this.state === 'combat') this.hpBarT = Math.max(this.hpBarT, 0.5);
     if (this.hpBarT > 0) {
       this.hpBarT -= dt;
       const frac = Math.max(0, this.health / this.maxHealth);
       this.barBg.visible = this.barFg.visible = true;
       this.barBg.position.set(this.pos.x, this.height + 0.25, this.pos.z);
       this.barFg.position.set(this.pos.x, this.height + 0.25, this.pos.z);
-      this.barFg.scale.set(0.68 * frac, 0.045, 1);
+      this.barFg.scale.set(this.barW * frac, 0.045, 1);
       this.barFg.material.color.setHex(frac > 0.5 ? 0x62d072 : frac > 0.25 ? 0xd0b451 : 0xd05151);
     } else {
       this.barBg.visible = this.barFg.visible = false;
@@ -426,6 +442,7 @@ export class Enemy {
 
   fireOne(player, distToPlayer, onPlayerHit, seesPlayer) {
     this.muzzle.intensity = 9;
+    this.justShot = true; // co-op: relayed to the guest for sound/flash
     enemyShot();
     if (!seesPlayer || player.dead) return; // suppressing fire at nothing
     let chance = 0.75 - distToPlayer / ACCURACY_FALLOFF * 0.35;

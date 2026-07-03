@@ -3,6 +3,7 @@
 // into walls). Hitscan ballistics, muzzle flash, impact FX.
 import * as THREE from 'three';
 import { gunshot, reloadSound, hitmarkerSound } from './audio.js';
+import { MODS } from './mods.js';
 
 const HEADSHOT_MULT = 2.2;
 const SWAP_TIME = 0.4;
@@ -109,7 +110,10 @@ export class Weapon {
 
     this.cooldown = 0;
     this.reloading = 0;
+    this.reloadTotal = 1;
     this.kick = 0;
+    // co-op guest: route enemy damage through the network instead of applying it
+    this.damageHandler = null;
 
     this.sparks = [];
     this.sparkMat = new THREE.MeshBasicMaterial({ color: 0xffcf7a });
@@ -164,7 +168,8 @@ export class Weapon {
   startReload() {
     const s = this.current;
     if (this.reloading > 0 || this.swapT > 0 || s.mag === s.def.magSize || s.reserve === 0) return;
-    this.reloading = s.def.reloadTime;
+    this.reloadTotal = s.def.reloadTime * MODS.reload;
+    this.reloading = this.reloadTotal;
     reloadSound();
   }
 
@@ -225,6 +230,7 @@ export class Weapon {
     let spread = def.spread;
     if (player.speedNow > 3) spread += def.moveSpread;
     if (!player.grounded) spread += 0.02;
+    spread *= MODS.spread;
 
     let hitAny = null, killedAny = false, headAny = false;
     for (let p = 0; p < def.pellets; p++) {
@@ -235,9 +241,11 @@ export class Weapon {
       dir.normalize();
       const hit = this.tracePellet(origin, dir, enemies, def.range);
       if (hit.enemy) {
-        const dmg = (def.damage[0] + Math.random() * (def.damage[1] - def.damage[0])) * (hit.head ? HEADSHOT_MULT : 1);
+        const dmg = (def.damage[0] + Math.random() * (def.damage[1] - def.damage[0]))
+          * (hit.head ? HEADSHOT_MULT : 1) * MODS.damage;
         const wasAlive = hit.enemy.alive;
-        hit.enemy.takeDamage(dmg, player);
+        if (this.damageHandler) this.damageHandler(hit.enemy, dmg, hit.head);
+        else hit.enemy.takeDamage(dmg, player);
         hitAny = hit.enemy;
         headAny = headAny || hit.head;
         if (wasAlive && !hit.enemy.alive) killedAny = true;
@@ -269,7 +277,7 @@ export class Weapon {
     this.kick = Math.max(0, this.kick - dt * 9);
     const bob = Math.sin(player.bobPhase * 2) * player.bobAmp * 0.6;
     const reloadDip = this.reloading > 0
-      ? Math.sin(Math.min(1, (def.reloadTime - this.reloading) / def.reloadTime) * Math.PI) * 0.28 : 0;
+      ? Math.sin(Math.min(1, (this.reloadTotal - this.reloading) / this.reloadTotal) * Math.PI) * 0.28 : 0;
     const swapDip = this.swapT > 0 ? (this.swapT / SWAP_TIME) * 0.35 : 0;
     const vm = s.vm;
     vm.position.set(

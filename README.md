@@ -1,10 +1,29 @@
 # BLACKSITE
 
 A retro-modern first-person shooter in the browser. Procedurally generated
-industrial sectors, tactical enemy AI, dynamic lighting with a flashlight,
-procedural textures and sound — zero external assets, no build step.
+industrial sectors, squad enemy AI, sliding doors, boss sectors, grenades,
+roguelite upgrades between sectors, a fog-of-war minimap — and 2-player
+online co-op with Google sign-in, random callsigns, and a friends system.
+Zero external assets, no build step.
 
 Built with [Three.js](https://threejs.org/) (vendored, no CDN dependency).
+Multiplayer uses WebRTC data channels with Firebase (Auth + Firestore) for
+accounts, friends, and signaling.
+
+## Multiplayer setup (one-time)
+
+1. In the [Firebase console](https://console.firebase.google.com): create a
+   project → add a **Web app** → copy its config object into
+   `src/firebase-config.js` (`export const FIREBASE_CONFIG = { ... }`).
+2. **Authentication → Sign-in method**: enable **Google**.
+3. **Authentication → Settings → Authorized domains**: add your Pages domain
+   (e.g. `<user>.github.io`) and any Cloud Run domain.
+4. **Firestore Database**: create (production mode), then paste
+   `firestore.rules` into Rules and publish.
+
+Without a config, the game runs single-player and hides all account UI.
+Usernames are randomly generated callsigns (rerollable in the menu, never
+user-typed). Accounts can be deleted from the menu.
 
 ## Play
 

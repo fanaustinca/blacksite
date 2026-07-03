@@ -1,10 +1,12 @@
 // Minimal offline cache so the game is installable/playable offline.
-const CACHE = 'blacksite-v2';
+const CACHE = 'blacksite-v3';
 const ASSETS = [
   '.', 'index.html', 'manifest.json', 'icon.svg',
   'vendor/three.module.js',
   'src/main.js', 'src/world.js', 'src/player.js', 'src/enemies.js',
   'src/weapons.js', 'src/textures.js', 'src/audio.js',
+  'src/mods.js', 'src/grenades.js', 'src/net.js', 'src/coop.js',
+  'src/firebase-config.js',
 ];
 
 self.addEventListener('install', e => {
