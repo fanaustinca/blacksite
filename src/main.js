@@ -385,7 +385,7 @@ async function initAccountUI() {
   if (!ok) return; // no firebase config — solo mode only
   ui.accountUi.style.display = 'flex';
 
-  net.onAuth((user, profile) => {
+  net.onAuth((user, profile, err) => {
     ui.signedOut.classList.toggle('hidden', !!user);
     ui.signedIn.classList.toggle('hidden', !user);
     if (user && profile) {
@@ -393,6 +393,9 @@ async function initAccountUI() {
       net.listenFriends(renderFriends);
       net.listenRequests(renderRequests);
       net.listenInvites(renderInvites);
+    } else if (user && err) {
+      ui.callsign.textContent = '—';
+      netMsg('profile load failed: ' + (err.code || err.message));
     }
   });
 

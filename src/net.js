@@ -41,8 +41,16 @@ class Net {
       this.enabled = true;
       this.fb.auth.onAuthStateChanged(this.fb.authInst, async user => {
         this.user = user;
-        this.profile = user ? await this.ensureProfile(user) : null;
-        for (const cb of this.authListeners) cb(this.user, this.profile);
+        let err = null;
+        try {
+          this.profile = user ? await this.ensureProfile(user) : null;
+        } catch (e) {
+          // e.g. Firestore missing or rules not published — surface, don't hang
+          console.warn('profile load failed:', e);
+          this.profile = null;
+          err = e;
+        }
+        for (const cb of this.authListeners) cb(this.user, this.profile, err);
       });
       return true;
     } catch (e) {
