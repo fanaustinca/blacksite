@@ -8,10 +8,10 @@ service cloud.firestore {
       allow create, update: if request.auth != null && request.auth.uid == uid;
       allow delete: if request.auth != null && request.auth.uid == uid;
 
-      // friend requests: sender creates, owner reads/deletes (accept/decline)
+      // friend requests: sender creates/re-sends, owner reads/deletes (accept/decline)
       match /requests/{fromUid} {
         allow read: if request.auth != null && (request.auth.uid == uid || request.auth.uid == fromUid);
-        allow create: if request.auth != null && request.auth.uid == fromUid;
+        allow create, update: if request.auth != null && request.auth.uid == fromUid;
         allow delete: if request.auth != null && (request.auth.uid == uid || request.auth.uid == fromUid);
       }
 
