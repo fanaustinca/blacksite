@@ -3,8 +3,13 @@
 A retro-modern first-person shooter in the browser. Procedurally generated
 industrial sectors, squad enemy AI, sliding doors, boss sectors, grenades,
 roguelite upgrades between sectors, a fog-of-war minimap — and 2-player
-online co-op with Google sign-in, random callsigns, and a friends system.
-Zero external assets, no build step.
+online co-op and 1v1 PvP deathmatch with Google sign-in, random callsigns,
+and a friends system. Zero external assets, no build step.
+
+PvP: FIND PVP queues you for up to 5 minutes and pairs you with the
+longest-waiting player (or a friend can join you directly from their friends
+panel — friends see each other's live status). Matches are first-to-5-kills
+deathmatch on a guard-free sector; respawns are instant-ish (2.5s).
 
 Built with [Three.js](https://threejs.org/) (vendored, no CDN dependency).
 Multiplayer uses WebRTC data channels with Firebase (Auth + Firestore) for

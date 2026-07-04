@@ -67,7 +67,10 @@ class Net {
     await signInWithPopup(this.fb.authInst, new GoogleAuthProvider());
   }
 
-  async signOut() { await this.fb.auth.signOut(this.fb.authInst); }
+  async signOut() {
+    try { await this.leavePvpQueue(); await this.setStatus('offline'); } catch { }
+    await this.fb.auth.signOut(this.fb.authInst);
+  }
 
   // ---- profile / username ----
 
@@ -117,6 +120,7 @@ class Net {
     if (!this.user) return;
     const { doc, deleteDoc } = this.fb.fs;
     const uid = this.user.uid;
+    await this.leavePvpQueue();
     try {
       if (this.profile?.username) await deleteDoc(doc(this.fb.db, 'usernames', this.profile.username));
       await deleteDoc(doc(this.fb.db, 'users', uid));
@@ -176,6 +180,90 @@ class Net {
       snap => cb(snap.docs.map(d => ({ uid: d.id, ...d.data() }))));
     this._unsubs.push(unsub);
     return unsub;
+  }
+
+  // ---- presence (friends can see what you're doing) ----
+
+  async setStatus(status, joinCode = null) {
+    if (!this.enabled || !this.user) return;
+    this._lastStatus = status;
+    this._lastCode = joinCode;
+    const { doc, updateDoc } = this.fb.fs;
+    try {
+      await updateDoc(doc(this.fb.db, 'users', this.user.uid),
+        { status, joinCode, statusAt: Date.now() });
+    } catch (e) { /* best-effort */ }
+  }
+
+  // keep statusAt fresh so friends can tell live status from a closed tab
+  startHeartbeat() {
+    if (this._hb) return;
+    this._hb = setInterval(() => {
+      if (this.user && this._lastStatus) this.setStatus(this._lastStatus, this._lastCode);
+    }, 60 * 1000);
+  }
+
+  listenFriendStatuses(uids, cb) {
+    const { doc, onSnapshot } = this.fb.fs;
+    for (const u of this._statusUnsubs ?? []) u();
+    this._statusUnsubs = [];
+    const statuses = {};
+    for (const uid of uids) {
+      const unsub = onSnapshot(doc(this.fb.db, 'users', uid), snap => {
+        const d = snap.data();
+        if (d) statuses[uid] = { status: d.status, statusAt: d.statusAt, joinCode: d.joinCode };
+        cb(statuses);
+      });
+      this._statusUnsubs.push(unsub);
+    }
+  }
+
+  // ---- pvp matchmaking queue ----
+
+  async enterPvpQueue(code) {
+    const { doc, setDoc } = this.fb.fs;
+    const at = Date.now();
+    await setDoc(doc(this.fb.db, 'queue', this.user.uid),
+      { uid: this.user.uid, username: this.profile.username, code, at });
+    return at;
+  }
+
+  async leavePvpQueue() {
+    if (!this.enabled || !this.user) return;
+    const { doc, deleteDoc } = this.fb.fs;
+    try { await deleteDoc(doc(this.fb.db, 'queue', this.user.uid)); } catch { }
+  }
+
+  // atomically claim a specific queued player; returns their entry or null
+  async claimQueueByUid(uid) {
+    const { doc, runTransaction } = this.fb.fs;
+    try {
+      let entry = null;
+      await runTransaction(this.fb.db, async tx => {
+        const ref = doc(this.fb.db, 'queue', uid);
+        const snap = await tx.get(ref);
+        if (!snap.exists()) throw new Error('gone');
+        entry = snap.data();
+        tx.delete(ref);
+      });
+      return entry;
+    } catch { return null; }
+  }
+
+  // claim the longest-waiting fresh opponent. olderThan limits the scan to
+  // entries queued before our own so simultaneous searchers pair one-way.
+  async claimPvpOpponent(olderThan = Infinity) {
+    const { collection, query, where, getDocs } = this.fb.fs;
+    const snap = await getDocs(query(collection(this.fb.db, 'queue'),
+      where('at', '>', Date.now() - 5 * 60 * 1000)));
+    const entries = snap.docs.map(d => d.data())
+      .filter(e => e.uid !== this.user.uid && e.at < olderThan)
+      .sort((a, b) => a.at - b.at);
+    for (const e of entries) {
+      const claimed = await this.claimQueueByUid(e.uid);
+      if (claimed) return claimed;
+    }
+    return null;
   }
 
   // ---- co-op invites ----

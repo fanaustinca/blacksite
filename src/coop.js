@@ -7,11 +7,11 @@ import { enemyShot } from './audio.js';
 
 const SNAP_HZ = 12;
 
-// remote teammate avatar (blue-tinted soldier)
-function buildAvatar() {
+// remote player avatar (blue-tinted teammate, red-tinted pvp hostile)
+function buildAvatar(hostile = false) {
   const g = new THREE.Group();
-  const uniform = new THREE.MeshStandardMaterial({ color: 0x2e4a66, roughness: 0.9 });
-  const gear = new THREE.MeshStandardMaterial({ color: 0x1a2836, roughness: 0.8 });
+  const uniform = new THREE.MeshStandardMaterial({ color: hostile ? 0x6b2f28 : 0x2e4a66, roughness: 0.9 });
+  const gear = new THREE.MeshStandardMaterial({ color: hostile ? 0x381c16 : 0x1a2836, roughness: 0.8 });
   const skin = new THREE.MeshStandardMaterial({ color: 0x8a6f58, roughness: 0.85 });
   const torso = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.62, 0.3), uniform);
   torso.position.y = 1.12;
@@ -36,6 +36,7 @@ export class Coop {
   constructor() {
     this.active = false;
     this.isHost = false;
+    this.mode = 'coop';      // 'coop' | 'pvp'
     this.dc = null;
     this.remote = null;       // avatar state: pos, dead, speedNow, grounded, hp
     this.remoteMesh = null;
@@ -46,9 +47,10 @@ export class Coop {
     this.peerLeft = false;
   }
 
-  start(dc, isHost, scene) {
+  start(dc, isHost, scene, mode = 'coop') {
     this.active = true;
     this.isHost = isHost;
+    this.mode = mode;
     this.dc = dc;
     this.peerLeft = false;
     this.remote = {
@@ -56,7 +58,7 @@ export class Coop {
       speedNow: 0, grounded: true, jumpY: 0,
       listenPos: null, // set by main to local player pos (footstep audio anchor)
     };
-    this.remoteMesh = buildAvatar();
+    this.remoteMesh = buildAvatar(mode === 'pvp');
     this.remoteMesh.visible = false;
     scene.add(this.remoteMesh);
     dc.onmessage = e => {
@@ -138,7 +140,7 @@ export class Coop {
     });
   }
 
-  sendLevel(level, seed, types) { this.send({ t: 'lvl', level, seed, types }); }
+  sendLevel(level, seed, types, pvp = false) { this.send({ t: 'lvl', level, seed, types, pvp: pvp ? 1 : 0 }); }
   sendPickup(i) { this.send({ t: 'pk', i }); }
   sendEnemyShoot(i) { this.send({ t: 'sh', i }); }
   sendPlayerHit(dmg) { this.send({ t: 'phit', d: Math.round(dmg) }); }

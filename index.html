@@ -182,7 +182,7 @@
       <div id="grenade-line">GRENADES &times; <b id="grenade-count">3</b></div>
     </div>
     <div class="hud-panel" id="objective">HOSTILES REMAINING: <b id="enemy-count">0</b></div>
-    <div class="hud-panel" id="coop-status">TEAMMATE <span id="mate-name"></span> &mdash; <span class="mate-hp" id="mate-hp">100</span></div>
+    <div class="hud-panel" id="coop-status"><span id="mate-label">TEAMMATE</span> <span id="mate-name"></span> &mdash; <span class="mate-hp" id="mate-hp">100</span></div>
     <canvas id="minimap" width="148" height="148"></canvas>
   </div>
 
@@ -220,6 +220,7 @@
         <div id="coop-row">
           <button class="menu-btn" id="btn-friends">FRIENDS</button>
           <button class="menu-btn" id="btn-host">HOST CO-OP</button>
+          <button class="menu-btn" id="btn-pvp">FIND PVP</button>
           <input class="menu-input" id="join-code" maxlength="5" placeholder="CODE">
           <button class="menu-btn" id="btn-join">JOIN</button>
         </div>

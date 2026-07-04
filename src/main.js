@@ -121,13 +121,15 @@ function buildLevel(seed = null, guestTypes = null) {
   clearScene();
   const gridSize = Math.min(64, 28 + level * 4);
   world = new World(scene, gridSize, gridSize, seed);
-  const spawn = world.roomCenterWorld(0);
+  let spawn = world.roomCenterWorld(0);
+  // pvp: players start in opposite corners of the map
+  if (pvp && coop.active && !coop.isHost) spawn = world.farthestRoomWorld(spawn);
 
   if (!player) player = new Player(camera, world, renderer.domElement);
   player.world = world;
   const wasDead = player.dead;
   player.spawnAt(spawn);
-  if (coop.active && !coop.isHost) player.pos.x += 1.2; // don't spawn inside host
+  if (coop.active && !coop.isHost && !pvp) player.pos.x += 1.2; // don't spawn inside host
 
   if (!weapon) {
     weapon = new Weapon(camera, scene, world);
@@ -136,12 +138,15 @@ function buildLevel(seed = null, guestTypes = null) {
     weapon.attachSparks(scene);
     if (wasDead && !coop.active) weapon.resetAmmo();
   }
-  weapon.damageHandler = (coop.active && !coop.isHost) ? guestDamageEnemy : null;
+  weapon.damageHandler = pvp ? pvpDamageRemote
+    : (coop.active && !coop.isHost) ? guestDamageEnemy : null;
 
   if (!grenades) grenades = new GrenadeManager(scene, world);
   else grenades.attach(scene, world);
 
-  if (guestTypes) {
+  if (pvp) {
+    enemies = [];               // no guards in pvp — it's just the two of you
+  } else if (guestTypes) {
     enemies = coop.buildPuppets(scene, world, guestTypes);
   } else {
     const count = 5 + level * 2;
@@ -168,8 +173,19 @@ function buildLevel(seed = null, guestTypes = null) {
   visited = new Uint8Array(world.w * world.h);
 
   if (coop.active && coop.isHost) {
-    coop.sendLevel(level, world.seed, enemies.map(e => e.type));
+    coop.sendLevel(level, world.seed, enemies.map(e => e.type), !!pvp);
   }
+}
+
+// ---------- pvp state ----------
+const PVP_WIN = 5;
+let pvp = null;            // { my, their, respawnT } while a match is live
+// phantom hitscan target standing in for the remote player
+const pvpTarget = { alive: false, radius: 0.38, height: 1.8, pos: new THREE.Vector3() };
+
+function pvpDamageRemote(target, dmg, head) {
+  if (target !== pvpTarget) return;
+  coop.send({ t: 'pvphit', d: Math.round(dmg), h: head ? 1 : 0 });
 }
 
 // ---------- damage routing ----------
@@ -182,7 +198,12 @@ function onPlayerHit(dmg) {
   setTimeout(() => hud.hurtFlash.style.opacity = '0', 90);
   if (player.dead) {
     deathSound();
-    if (coop.active) {
+    if (pvp) {
+      pvp.their++;
+      coop.send({ t: 'pvpdie' });
+      if (pvp.their >= PVP_WIN) { endPvpMatch(false); return; }
+      pvp.respawnT = 2.5;
+    } else if (coop.active) {
       // downed until sector clears; if both down, run ends (host decides)
       if (coop.remote?.dead) hostGameOver();
     } else {
@@ -216,8 +237,50 @@ function hostGameOver() {
   endRun();
 }
 
+// ---------- pvp match lifecycle ----------
+function beginPvp(dc, isHost, name) {
+  coop.start(dc, isHost, scene, 'pvp');
+  coop.remoteName = name;
+  setupCoopHandlers();
+  coop.send({ t: 'hello', n: net.profile.username });
+  pvp = { my: 0, their: 0, respawnT: 0 };
+  net.setStatus('pvp');
+  $('mate-label').textContent = 'HOSTILE';
+  hud.coopStatus.style.display = 'block';
+  hud.mateName.textContent = name;
+  resetRun();
+  hud.overlay.classList.add('hidden');
+  hud.runStats.classList.add('hidden');
+  unlockAudio(); startAmbient();
+  if (isHost) {
+    buildLevel();               // sends lvl (with pvp flag) to the guest
+    grenades.count = 0;         // grenades are client-local physics — off in pvp
+    running = true;
+    lockPointer();
+  } else {
+    netMsg('connected — waiting for host to start');
+  }
+}
+
+function endPvpMatch(won) {
+  if (!pvp) return;
+  const score = `${pvp.my} : ${pvp.their}`;
+  pvp = null;
+  running = false;
+  coop.stop();
+  hud.coopStatus.style.display = 'none';
+  $('mate-label').textContent = 'TEAMMATE';
+  if (weapon) weapon.damageHandler = null;
+  net.setStatus('online');
+  resetRun();
+  hud.runStats.innerHTML = `PVP RESULT &mdash; <b>${score}</b>`;
+  hud.runStats.classList.remove('hidden');
+  showOverlay(won ? 'VICTORY' : 'DEFEATED', 'CLICK / TAP TO DEPLOY SOLO');
+}
+
 function endRun() {
   running = false;
+  net.setStatus?.('online');
   saveBest();
   const best = loadBest();
   const acc = stats.shots ? Math.round(stats.hits / stats.shots * 100) : 0;
@@ -249,6 +312,7 @@ function resetRun() {
 function startGame() {
   // co-op guest can't start levels; they wait for the host's lvl message
   if (coop.active && !coop.isHost) { netMsg('waiting for host…'); return; }
+  if (pvpSearch) { netMsg('searching for pvp — cancel the search first'); return; }
   hud.overlay.classList.add('hidden');
   hud.runStats.classList.add('hidden');
   unlockAudio();
@@ -260,6 +324,7 @@ function startGame() {
     grenades.count = Math.max(grenades.count, 1);
   }
   running = true;
+  if (!coop.active) net.setStatus?.('solo');
   lockPointer();
 }
 
@@ -336,10 +401,12 @@ function setupCoopHandlers() {
   coop.on('e', m => { if (!coop.isHost) coop.applyEnemySnapshot(m, player ? player.pos : null); });
   coop.on('lvl', m => {
     level = m.level;
+    if (m.pvp && !pvp) pvp = { my: 0, their: 0, respawnT: 0 };
     hud.upgradePanel.classList.add('hidden');
     hud.overlay.classList.add('hidden');
     if (!stats) stats = newStats();
     buildLevel(m.seed, m.types);
+    if (pvp) grenades.count = 0;
     running = true;
     lockPointer();
   });
@@ -367,6 +434,23 @@ function setupCoopHandlers() {
   coop.on('phit', m => onPlayerHit(m.d));
   coop.on('clear', () => { if (!coop.isHost) { level++; setTimeout(showUpgradePicker, 900); } });
   coop.on('over', () => { if (!coop.isHost) endRun(); });
+
+  // ---- pvp messages ----
+  coop.on('hello', m => {
+    if (m.n) { coop.remoteName = m.n; hud.mateName.textContent = m.n; }
+  });
+  coop.on('pvphit', m => { if (pvp) onPlayerHit(m.d); });
+  coop.on('pvpdie', () => {
+    if (!pvp) return;
+    pvp.my++;
+    stats.kills++;
+    killConfirm();
+    if (pvp.my >= PVP_WIN) {
+      coop.send({ t: 'pvpend' });
+      endPvpMatch(true);
+    }
+  });
+  coop.on('pvpend', () => endPvpMatch(false));
 }
 
 // ---------- account / menu UI ----------
@@ -393,6 +477,8 @@ async function initAccountUI() {
       net.listenFriends(renderFriends);
       net.listenRequests(renderRequests);
       net.listenInvites(renderInvites);
+      net.setStatus('online');
+      net.startHeartbeat();
     } else if (user && err) {
       ui.callsign.textContent = '—';
       netMsg('profile load failed: ' + (err.code || err.message));
@@ -440,6 +526,8 @@ async function initAccountUI() {
       coop.start(dc, true, scene);
       coop.remoteName = 'GUEST';
       setupCoopHandlers();
+      net.setStatus('coop');
+      $('mate-label').textContent = 'TEAMMATE';
       hud.coopStatus.style.display = 'block';
       resetRun();
       hud.overlay.classList.add('hidden');
@@ -450,6 +538,103 @@ async function initAccountUI() {
     } catch (e) { netMsg('hosting failed: ' + e.message); }
   };
   $('btn-join').onclick = () => joinByCode($('join-code').value);
+  $('btn-pvp').onclick = () => {
+    if (pvpSearch) cancelPvpSearch('search cancelled');
+    else findPvpMatch();
+  };
+}
+
+// ---------- pvp matchmaking ----------
+let pvpSearch = null;   // { code, pc, iv, at } while queued
+const withTimeout = (p, ms) =>
+  Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
+
+async function findPvpMatch() {
+  if (!net.user || !net.profile) { netMsg('sign in first'); return; }
+  if (coop.active) { netMsg('already in a session'); return; }
+  const btn = $('btn-pvp');
+  btn.disabled = true;
+  netMsg('searching for an opponent…');
+
+  // someone already waiting? claim them and join their room
+  try {
+    const opp = await net.claimPvpOpponent();
+    if (opp) {
+      netMsg(`match found: ${opp.username} — connecting…`);
+      const { channel } = await net.joinRoom(opp.code);
+      const dc = await withTimeout(channel, 15000);
+      btn.disabled = false;
+      beginPvp(dc, false, opp.username || 'CHALLENGER');
+      return;
+    }
+  } catch { /* their room was dead — queue up instead */ }
+
+  // nobody waiting: host a room and enter the queue for up to 5 minutes
+  try {
+    const { code, channel, pc } = await net.hostRoom(0);
+    const at = await net.enterPvpQueue(code);
+    net.setStatus('pvp-queue', code);
+    let left = 300;
+    const iv = setInterval(() => {
+      left--;
+      if (pvpSearch) {
+        netMsg(`in matchmaking queue — ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} (friends can join you)`);
+        // rescan for players who queued before us (pairs simultaneous searchers)
+        if (left % 10 === 0) rescanPvpQueue();
+      }
+      if (left <= 0) cancelPvpSearch('no opponent found — try again later');
+    }, 1000);
+    pvpSearch = { code, pc, iv, at };
+    btn.disabled = false;
+    btn.textContent = 'CANCEL SEARCH';
+    const dc = await channel;    // resolves when an opponent joins
+    clearInterval(iv);
+    pvpSearch = null;
+    btn.textContent = 'FIND PVP';
+    net.leavePvpQueue();
+    beginPvp(dc, true, 'CHALLENGER');
+  } catch (e) {
+    // channel rejects when cancelPvpSearch closes the connection — that's fine
+    if (pvpSearch) cancelPvpSearch('matchmaking failed: ' + e.message);
+    btn.disabled = false;
+  }
+}
+
+async function rescanPvpQueue() {
+  if (!pvpSearch) return;
+  const opp = await net.claimPvpOpponent(pvpSearch.at).catch(() => null);
+  if (!opp || !pvpSearch) return;
+  // found someone who queued before us: abandon our room, join theirs
+  const s = pvpSearch;
+  pvpSearch = null;
+  clearInterval(s.iv);
+  try { s.pc.close(); } catch { }
+  net._deleteRoom(s.code);
+  net.leavePvpQueue();
+  $('btn-pvp').textContent = 'FIND PVP';
+  try {
+    netMsg(`match found: ${opp.username} — connecting…`);
+    const { channel } = await net.joinRoom(opp.code);
+    const dc = await withTimeout(channel, 15000);
+    beginPvp(dc, false, opp.username || 'CHALLENGER');
+  } catch {
+    netMsg('connection failed — search again');
+    net.setStatus('online');
+  }
+}
+
+function cancelPvpSearch(msg) {
+  if (!pvpSearch) return;
+  const s = pvpSearch;
+  pvpSearch = null;
+  clearInterval(s.iv);
+  try { s.pc.close(); } catch { }
+  net._deleteRoom(s.code);
+  net.leavePvpQueue();
+  net.setStatus('online');
+  $('btn-pvp').textContent = 'FIND PVP';
+  $('btn-pvp').disabled = false;
+  netMsg(msg);
 }
 
 async function joinByCode(code) {
@@ -461,6 +646,8 @@ async function joinByCode(code) {
     coop.start(dc, false, scene);
     coop.remoteName = hostName || 'HOST';
     setupCoopHandlers();
+    net.setStatus('coop');
+    $('mate-label').textContent = 'TEAMMATE';
     hud.coopStatus.style.display = 'block';
     hud.mateName.textContent = coop.remoteName;
     resetRun();
@@ -470,13 +657,49 @@ async function joinByCode(code) {
 }
 
 let lastFriends = [];
+let friendStatuses = {};
+const STATUS_LABEL = {
+  online: 'IN MENU', solo: 'IN SOLO RUN', coop: 'IN CO-OP',
+  'pvp-queue': 'LOOKING FOR PVP', pvp: 'IN PVP MATCH',
+};
+
 function renderFriends(friends) {
   lastFriends = friends;
+  // live presence: what each friend is doing right now
+  net.listenFriendStatuses(friends.map(f => f.uid), m => { friendStatuses = m; drawFriendRows(); });
+  drawFriendRows();
+}
+
+function drawFriendRows() {
+  const friends = lastFriends;
   ui.friendList.innerHTML = friends.length ? '' : '<div style="opacity:0.5;font-size:12px">none yet</div>';
   for (const f of friends) {
+    const st = friendStatuses[f.uid];
+    const fresh = st && Date.now() - (st.statusAt || 0) < 120000; // stale = tab closed
+    const label = fresh ? STATUS_LABEL[st.status] : null;
     const row = document.createElement('div');
     row.className = 'row';
-    row.innerHTML = `<span>${f.username}</span>`;
+    row.innerHTML = `<span>${f.username}${label
+      ? ` <span style="font-size:10px;color:#8fb89a">· ${label}</span>` : ''}</span>`;
+    if (fresh && st.status === 'pvp-queue' && st.joinCode) {
+      const btn = document.createElement('button');
+      btn.className = 'menu-btn small';
+      btn.textContent = 'JOIN PVP';
+      btn.onclick = async () => {
+        btn.disabled = true;
+        if (pvpSearch) cancelPvpSearch('');
+        const entry = await net.claimQueueByUid(f.uid);
+        if (!entry) { btn.textContent = 'GONE'; return; }
+        try {
+          netMsg(`joining ${f.username}…`);
+          const { channel } = await net.joinRoom(entry.code);
+          const dc = await withTimeout(channel, 15000);
+          ui.friendsPanel.classList.add('hidden');
+          beginPvp(dc, false, f.username);
+        } catch { netMsg(`could not reach ${f.username}`); btn.disabled = false; }
+      };
+      row.appendChild(btn);
+    }
     if (hostCode) {
       const btn = document.createElement('button');
       btn.className = 'menu-btn small';
@@ -592,9 +815,15 @@ function updateHUD() {
   hud.weaponName.textContent = weapon.current.def.name;
   hud.grenades.textContent = grenades.count;
   const left = enemies.filter(e => e.alive).length;
-  hud.objective.innerHTML = (isBossLevel(level) && enemies.some(e => e.type === 'boss' && e.alive))
-    ? `<span style="color:#ffb060">ELIMINATE THE WARDEN</span> — HOSTILES: <b>${left}</b>`
-    : `SECTOR ${level} — HOSTILES REMAINING: <b>${left}</b>`;
+  if (pvp) {
+    hud.objective.innerHTML = player.dead
+      ? `<span style="color:#e05050">ELIMINATED — RESPAWNING…</span> &nbsp;YOU <b>${pvp.my}</b> : <b>${pvp.their}</b>`
+      : `<span style="color:#ff8060">PVP DEATHMATCH</span> — YOU <b>${pvp.my}</b> : <b>${pvp.their}</b> ${coop.remoteName || ''} — FIRST TO ${PVP_WIN}`;
+  } else {
+    hud.objective.innerHTML = (isBossLevel(level) && enemies.some(e => e.type === 'boss' && e.alive))
+      ? `<span style="color:#ffb060">ELIMINATE THE WARDEN</span> — HOSTILES: <b>${left}</b>`
+      : `SECTOR ${level} — HOSTILES REMAINING: <b>${left}</b>`;
+  }
   if (coop.active && coop.remote) {
     hud.mateName.textContent = coop.remoteName;
     hud.mateHp.textContent = coop.remote.dead ? 'DOWN' : coop.remote.hp;
@@ -607,7 +836,7 @@ const clock = new THREE.Clock();
 let hitmarkerT = 0;
 
 function checkSectorClear() {
-  if (!running) return;
+  if (!running || pvp) return;
   if (coop.active && !coop.isHost) return; // host decides
   if (enemies.length && enemies.every(e => !e.alive)) onSectorClear();
 }
@@ -619,6 +848,28 @@ function tick() {
 
   if (running) {
     player.update(dt);
+
+    // pvp: keep the phantom target on the opponent, handle respawns
+    if (pvp) {
+      if (coop.remote) {
+        pvpTarget.pos.copy(coop.remote.pos);
+        pvpTarget.alive = !coop.remote.dead && coop.remote.seen === true;
+      }
+      if (player.dead) {
+        pvp.respawnT -= dt;
+        if (pvp.respawnT <= 0) {
+          // respawn in the room farthest from the opponent
+          let best = null, bestD = -1;
+          for (let i = 0; i < world.rooms.length; i++) {
+            const c = world.roomCenterWorld(i);
+            const d = coop.remote ? c.distanceTo(coop.remote.pos) : 1;
+            if (d > bestD) { bestD = d; best = c; }
+          }
+          player.spawnAt(best);
+        }
+      }
+      if (coop.peerLeft) { netMsg('opponent disconnected'); endPvpMatch(true); }
+    }
 
     // door triggers + light flicker
     const actors = [player.pos];
@@ -644,14 +895,14 @@ function tick() {
     if (player.wantSwap) { player.wantSwap = false; weapon.swap(); }
     if (player.wantGrenade) {
       player.wantGrenade = false;
-      if (!player.dead && grenades.throw(player.eyePos(), player.forwardDir())) {
+      if (!pvp && !player.dead && grenades.throw(player.eyePos(), player.forwardDir())) {
         for (const e of enemies) {
           if (e.alive && !e.puppet && e.pos.distanceTo(player.pos) < 14) e.hearNoise(player.pos);
         }
       }
     }
     if (player.wantFire && !player.dead) {
-      const res = weapon.tryFire(player, enemies);
+      const res = weapon.tryFire(player, pvp ? [pvpTarget] : enemies);
       if (res) {
         stats.shots++;
         if (res.hitEnemy) stats.hits++;
@@ -737,8 +988,8 @@ function tick() {
     }
 
     coop.update(dt, player, enemies);
-    // whole squad down -> run over (host authoritative)
-    if (coop.active && coop.isHost && player.dead && coop.remote?.dead) hostGameOver();
+    // whole squad down -> run over (host authoritative; co-op only)
+    if (!pvp && coop.active && coop.isHost && player.dead && coop.remote?.dead) hostGameOver();
     weapon.update(dt, player);
     updateHUD();
     checkSectorClear();
