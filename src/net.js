@@ -37,7 +37,8 @@ class Net {
         import(SDK + 'firebase-firestore.js'),
       ]);
       const app = appMod.initializeApp(FIREBASE_CONFIG);
-      this.fb = { auth: authMod, fs: fsMod, authInst: authMod.getAuth(app), db: fsMod.getFirestore(app) };
+      // named database (the project's (default) db belongs to other apps)
+      this.fb = { auth: authMod, fs: fsMod, authInst: authMod.getAuth(app), db: fsMod.getFirestore(app, 'blacksite') };
       this.enabled = true;
       this.fb.auth.onAuthStateChanged(this.fb.authInst, async user => {
         this.user = user;
