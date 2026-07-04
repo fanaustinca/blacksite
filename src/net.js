@@ -74,7 +74,13 @@ class Net {
 
   // ---- profile / username ----
 
-  async ensureProfile(user) {
+  // memoized per-uid: concurrent auth callbacks must not claim two callsigns
+  ensureProfile(user) {
+    if (this._pp?.uid !== user.uid) this._pp = { uid: user.uid, p: this._ensureProfile(user) };
+    return this._pp.p;
+  }
+
+  async _ensureProfile(user) {
     const { doc, getDoc } = this.fb.fs;
     const ref = doc(this.fb.db, 'users', user.uid);
     const snap = await getDoc(ref);
